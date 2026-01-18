@@ -24,20 +24,25 @@
         "skipTaskbar": true,
         "hiddenTitle": true,
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": { "x": 16, "y": 18 }
+        "alwaysOnTop": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 18
+        }
       },
       {
         "label": "popup",
         "url": "/popup",
-        "width": 400,
-        "height": 300,
+        "minWidth": 500,
+        "maxWidth": 500,
+        "minHeight": 400,
         "visible": false,
         "shadow": false,
         "decorations": false,
         "transparent": true,
         "skipTaskbar": true,
         "alwaysOnTop": true,
-        "resizable": false,
+        "resizable": true,
         "acceptFirstMouse": true
       },
       {
@@ -63,8 +68,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "app", "dmg"],
-    "icon": ["icons/icon.icns", "icons/icon.ico"],
+    "targets": [
+      "nsis",
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "createUpdaterArtifacts": true,
     "macOS": {
       "minimumSystemVersion": "11.0"
@@ -73,11 +85,15 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdGODZDMzJCNTQ0NDZERDgKUldUWWJVUlVLOE9HZnk3ajY1dC83c2x2TnhXaUFCTVh1UnN1K3NGdWFBb0U0dWk0SExjNy92MFoK",
-      "endpoints": ["https://github.com/C5H12O5/TextGO/releases/latest/download/latest.json"]
+      "endpoints": [
+        "https://github.com/C5H12O5/TextGO/releases/latest/download/latest.json"
+      ]
     },
     "deep-link": {
       "desktop": {
-        "schemes": ["textgo"]
+        "schemes": [
+          "textgo"
+        ]
       }
     }
   }
