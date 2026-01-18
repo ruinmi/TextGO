@@ -4,7 +4,7 @@ use crate::error::AppError;
 use crate::platform;
 use crate::ENIGO;
 use enigo::{Direction, Key, Keyboard};
-use log::warn;
+use log::{debug, warn};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::AppHandle;
@@ -12,6 +12,12 @@ use tokio::time::sleep;
 
 // maximum wait time in milliseconds for clipboard to update
 static MAX_WAIT_TIME: AtomicU64 = AtomicU64::new(1000);
+
+#[derive(Clone, Copy)]
+enum CopyShortcut {
+    Standard,
+    Terminal,
+}
 
 /// Get selected text.
 #[tauri::command]
@@ -44,11 +50,14 @@ pub async fn get_selection_with_fallback(
 
     // if native API fails, fall back to clipboard method
     warn!("Failed to get selection natively, fallback to clipboard method");
-    get_selection_fallback(app).await
+    get_selection_fallback_with_shortcut(app, CopyShortcut::Standard).await
 }
 
 /// Get selected text through clipboard.
-async fn get_selection_fallback(app: AppHandle) -> Result<String, AppError> {
+async fn get_selection_fallback_with_shortcut(
+    app: AppHandle,
+    shortcut: CopyShortcut,
+) -> Result<String, AppError> {
     // use backup-operation-restore mode
     with_clipboard_backup(|| async move {
         // clear clipboard
@@ -56,8 +65,8 @@ async fn get_selection_fallback(app: AppHandle) -> Result<String, AppError> {
 
         // send copy shortcut
         // https://github.com/enigo-rs/enigo/issues/153
-        let _ = app.run_on_main_thread(|| {
-            let _ = send_copy_keys();
+        let _ = app.run_on_main_thread(move || {
+            let _ = send_copy_keys(shortcut);
         });
 
         // wait for clipboard content to change in a loop
@@ -103,8 +112,46 @@ async fn get_selection_fallback(app: AppHandle) -> Result<String, AppError> {
     .await
 }
 
+/// Get selected text for mouse-driven hooks.
+///
+/// - retries native selection once after a short delay (some apps update selection late)
+/// - uses clipboard fallback when needed, with a terminal-safe shortcut on Windows
+pub async fn get_selection_for_mouse(app: AppHandle) -> Result<String, AppError> {
+    // suspend shortcut handling to avoid interference
+    let _guard = ShortcutHandlerGuard::suspend();
+
+    // 1) native selection, then a short retry
+    if let Ok(text) = platform::get_selection() {
+        if !text.trim().is_empty() {
+            return Ok(text);
+        }
+    }
+
+    sleep(Duration::from_millis(30)).await;
+    if let Ok(text) = platform::get_selection() {
+        if !text.trim().is_empty() {
+            return Ok(text);
+        }
+    }
+
+    // 2) clipboard fallback with platform-specific shortcut
+    #[cfg(target_os = "windows")]
+    let shortcut = if platform::is_probably_terminal_focused().unwrap_or(false) {
+        debug!("mouse selection: using terminal copy shortcut");
+        CopyShortcut::Terminal
+    } else {
+        debug!("mouse selection: using standard copy shortcut");
+        CopyShortcut::Standard
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let shortcut = CopyShortcut::Standard;
+
+    get_selection_fallback_with_shortcut(app, shortcut).await
+}
+
 /// Send copy shortcut key.
-fn send_copy_keys() -> Result<(), AppError> {
+fn send_copy_keys(shortcut: CopyShortcut) -> Result<(), AppError> {
     let mut enigo_guard = ENIGO.lock()?;
     let enigo = enigo_guard.as_mut()?;
 
@@ -120,9 +167,29 @@ fn send_copy_keys() -> Result<(), AppError> {
     #[cfg(not(target_os = "macos"))]
     let modifier = Key::Control;
 
-    enigo.key(modifier, Direction::Press)?;
-    enigo.key(Key::Unicode('c'), Direction::Click)?;
-    enigo.key(modifier, Direction::Release)?;
+    match shortcut {
+        CopyShortcut::Standard => {
+            enigo.key(modifier, Direction::Press)?;
+            enigo.key(Key::Unicode('c'), Direction::Click)?;
+            enigo.key(modifier, Direction::Release)?;
+        }
+        CopyShortcut::Terminal => {
+            #[cfg(target_os = "windows")]
+            {
+                enigo.key(Key::Control, Direction::Press)?;
+                enigo.key(Key::Shift, Direction::Press)?;
+                enigo.key(Key::Unicode('c'), Direction::Click)?;
+                enigo.key(Key::Shift, Direction::Release)?;
+                enigo.key(Key::Control, Direction::Release)?;
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                enigo.key(modifier, Direction::Press)?;
+                enigo.key(Key::Unicode('c'), Direction::Click)?;
+                enigo.key(modifier, Direction::Release)?;
+            }
+        }
+    }
 
     Ok(())
 }

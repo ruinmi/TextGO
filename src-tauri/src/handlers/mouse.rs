@@ -1,4 +1,4 @@
-use crate::commands::get_selection_with_fallback;
+use crate::commands::get_selection_for_mouse;
 use crate::error::AppError;
 use crate::platform;
 use crate::{APP_HANDLE, ENIGO, SHORTCUT_PAUSED, SHORTCUT_SUSPEND};
@@ -91,7 +91,7 @@ fn handle_mouse_release() -> Result<(), AppError> {
     // check for drag end
     if IS_DRAGGING.get() {
         debug!("checking for drag end");
-        emit_event("MouseClick+MouseMove", selection_before)?;
+        emit_event("MouseClick+MouseMove", selection_before, false)?;
         IS_DRAGGING.set(false);
         return Ok(());
     }
@@ -112,7 +112,7 @@ fn handle_mouse_release() -> Result<(), AppError> {
             // emit event on 2nd and 3rd click; reuse the same shortcut string
             // so existing "double click" bindings also work for triple click.
             if count == 2 || count == 3 {
-                emit_event("MouseClick+MouseClick", selection_before)?;
+                emit_event("MouseClick+MouseClick", selection_before, true)?;
             }
 
             // keep state so a third click can be recognized; reset after triple.
@@ -147,17 +147,17 @@ fn mouse_pos() -> Result<(f64, f64), AppError> {
 }
 
 /// Emit mouse event to frontend with current selection.
-fn emit_event(shortcut: &str, selection_before: Option<String>) -> Result<(), AppError> {
+fn emit_event(shortcut: &str, selection_before: Option<String>, force_show: bool) -> Result<(), AppError> {
     // get selection asynchronously and emit event
     if let Some(app) = APP_HANDLE.lock()?.as_ref() {
         let app_handle = app.clone();
         let shortcut = shortcut.to_string();
         tauri::async_runtime::spawn(async move {
-            if let Ok(selection) = get_selection_with_fallback(app_handle.clone(), false).await {
+            if let Ok(selection) = get_selection_for_mouse(app_handle.clone()).await {
                 let selection = selection.trim().to_string();
                 let selection_before = selection_before.unwrap_or_default().trim().to_string();
 
-                if !selection.is_empty() && selection != selection_before {
+                if !selection.is_empty() && (force_show || selection != selection_before) {
                     // emit event if selection is not empty
                     let event_data = serde_json::json!({
                         "shortcut": shortcut,
