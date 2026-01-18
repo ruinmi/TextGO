@@ -55,10 +55,10 @@ tauri_panel! {
         config: {
             // can't be the main window
             can_become_main_window: false,
-            // can receive keyboard input
-            can_become_key_window: true,
-            // only becomes key when needed
-            becomes_key_only_if_needed: true,
+            // avoid stealing focus from the active app while still being clickable
+            can_become_key_window: false,
+            // irrelevant when `can_become_key_window` is false, but keep explicit
+            becomes_key_only_if_needed: false,
             // floats above other windows
             is_floating_panel: true,
             // works with modal dialogs
@@ -230,21 +230,13 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
 
                     // setup mouse hover activation
                     let app_handle = app.clone();
-                    let window_label = window.label().to_string();
                     handler.on_mouse_entered(move |_event| {
-                        if let Ok(panel) = app_handle.get_webview_panel(&window_label) {
-                            panel.make_key_window();
-                            let _ = app_handle.emit("toolbar-entered", ());
-                        }
+                        let _ = app_handle.emit("toolbar-entered", ());
                     });
 
                     let app_handle = app.clone();
-                    let window_label = window.label().to_string();
                     handler.on_mouse_exited(move |_event| {
-                        if let Ok(panel) = app_handle.get_webview_panel(&window_label) {
-                            panel.resign_key_window();
-                            let _ = app_handle.emit("toolbar-exited", ());
-                        }
+                        let _ = app_handle.emit("toolbar-exited", ());
                     });
 
                     // set the window to custom level 5

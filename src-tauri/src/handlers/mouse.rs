@@ -1,24 +1,24 @@
-use crate::commands::get_selection;
+use crate::commands::get_selection_with_fallback;
 use crate::error::AppError;
 use crate::platform;
 use crate::{APP_HANDLE, ENIGO, SHORTCUT_PAUSED, SHORTCUT_SUSPEND};
 use enigo::Mouse;
 use log::debug;
 use rdev::{Button, Event, EventType};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
-/// Type alias for mouse click data (time, position, is_valid_cursor).
-type Click = (Instant, (f64, f64), bool);
+/// Type alias for mouse click data (time, position, click_count).
+type Click = (Instant, (f64, f64), u8);
 
 // mouse event tracking states
 thread_local! {
     static DRAG_START_POS: Cell<Option<(f64, f64)>> = const { Cell::new(None) };
     static LAST_CLICK: Cell<Option<Click>> = const { Cell::new(None) };
     static IS_DRAGGING: Cell<bool> = const { Cell::new(false) };
-    static IS_VALID_CURSOR: Cell<bool> = const { Cell::new(false) };
+    static PRESS_SELECTION: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 // thresholds for drag and double click detection
@@ -58,8 +58,10 @@ fn handle_mouse_press() -> Result<(), AppError> {
     DRAG_START_POS.set(Some(pos));
     IS_DRAGGING.set(false);
 
-    // record if cursor is I-Beam
-    IS_VALID_CURSOR.set(platform::is_ibeam_cursor());
+    // snapshot current selection so we can detect if it changed due to this mouse action.
+    // (don't use clipboard fallback; it can interfere with the user's selection)
+    let selection_before = platform::get_selection().ok();
+    PRESS_SELECTION.with(|s| *s.borrow_mut() = selection_before);
 
     // hide toolbar on mouse press
     hide_toolbar(true)?;
@@ -84,42 +86,46 @@ fn handle_mouse_release() -> Result<(), AppError> {
     // reset drag start position
     DRAG_START_POS.set(None);
 
-    // only process text selection if cursor was valid
-    // inspired by https://github.com/0xfullex/selection-hook
-    let is_valid_cursor = IS_VALID_CURSOR.get() || platform::is_ibeam_cursor();
+    let selection_before = PRESS_SELECTION.with(|s| s.borrow_mut().take());
 
     // check for drag end
     if IS_DRAGGING.get() {
-        debug!("checking for drag end (cursor: {})", is_valid_cursor);
-        if is_valid_cursor {
-            // emit drag end event
-            emit_event("MouseClick+MouseMove")?;
-        }
+        debug!("checking for drag end");
+        emit_event("MouseClick+MouseMove", selection_before)?;
         IS_DRAGGING.set(false);
         return Ok(());
     }
 
-    // check for double click
+    // check for double/triple click
     let pos = mouse_pos()?;
     let now = Instant::now();
-    if let Some((last_time, last_pos, last_valid_cursor)) = LAST_CLICK.get() {
-        let valid_cursor = is_valid_cursor || last_valid_cursor;
+    if let Some((last_time, last_pos, last_count)) = LAST_CLICK.get() {
         let valid_interval = now.duration_since(last_time) < MAX_DBCLICK_INTERVAL;
         let valid_distance = distance(pos, last_pos) < MAX_DBCLICK_DISTANCE;
         debug!(
-            "checking for double click (cursor: {}, interval: {}, distance: {})",
-            valid_cursor, valid_interval, valid_distance
+            "checking for multi click (interval: {}, distance: {})",
+            valid_interval, valid_distance
         );
-        if valid_cursor && valid_interval && valid_distance {
-            // emit double click event
-            emit_event("MouseClick+MouseClick")?;
-            // reset last click state
-            LAST_CLICK.set(None);
+        if valid_interval && valid_distance {
+            let count = last_count.saturating_add(1).min(3);
+
+            // emit event on 2nd and 3rd click; reuse the same shortcut string
+            // so existing "double click" bindings also work for triple click.
+            if count == 2 || count == 3 {
+                emit_event("MouseClick+MouseClick", selection_before)?;
+            }
+
+            // keep state so a third click can be recognized; reset after triple.
+            if count >= 3 {
+                LAST_CLICK.set(None);
+            } else {
+                LAST_CLICK.set(Some((now, pos, count)));
+            }
         } else {
-            LAST_CLICK.set(Some((now, pos, is_valid_cursor)));
+            LAST_CLICK.set(Some((now, pos, 1)));
         }
     } else {
-        LAST_CLICK.set(Some((now, pos, is_valid_cursor)));
+        LAST_CLICK.set(Some((now, pos, 1)));
     }
 
     Ok(())
@@ -141,14 +147,17 @@ fn mouse_pos() -> Result<(f64, f64), AppError> {
 }
 
 /// Emit mouse event to frontend with current selection.
-fn emit_event(shortcut: &str) -> Result<(), AppError> {
+fn emit_event(shortcut: &str, selection_before: Option<String>) -> Result<(), AppError> {
     // get selection asynchronously and emit event
     if let Some(app) = APP_HANDLE.lock()?.as_ref() {
         let app_handle = app.clone();
         let shortcut = shortcut.to_string();
         tauri::async_runtime::spawn(async move {
-            if let Ok(selection) = get_selection(app_handle.clone()).await {
-                if !selection.trim().is_empty() {
+            if let Ok(selection) = get_selection_with_fallback(app_handle.clone(), false).await {
+                let selection = selection.trim().to_string();
+                let selection_before = selection_before.unwrap_or_default().trim().to_string();
+
+                if !selection.is_empty() && selection != selection_before {
                     // emit event if selection is not empty
                     let event_data = serde_json::json!({
                         "shortcut": shortcut,
