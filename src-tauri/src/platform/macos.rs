@@ -2,7 +2,7 @@ use crate::error::AppError;
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFRange, CFType, CFTypeRef, TCFType};
 use core_foundation::string::{CFString, CFStringRef};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::os::raw::c_void;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -24,14 +24,6 @@ const AX_VALUE_TYPE_CF_RANGE: i32 = 4;
 // each PID entry is valid for 5 seconds, after which it's considered a new process
 const PID_CACHE_EXPIRE_SECS: u64 = 5;
 static PROCESSED_PIDS: Mutex<Option<HashMap<i32, Instant>>> = Mutex::new(None);
-
-// NSPoint structure for macOS AppKit
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct NSPoint {
-    x: f64,
-    y: f64,
-}
 
 // CGRect structures for macOS CoreGraphics
 #[repr(C)]
@@ -109,22 +101,9 @@ unsafe fn objc_call_ptr(obj: *const c_void, sel: *const c_void) -> *const c_void
     objc_call!(obj, sel, *const c_void)
 }
 
-/// Invokes an Objective-C method that returns an NSPoint.
-unsafe fn objc_call_point(obj: *const c_void, sel: *const c_void) -> NSPoint {
-    objc_call!(obj, sel, NSPoint)
-}
-
 /// Invokes an Objective-C method that returns an i32.
 unsafe fn objc_call_i32(obj: *const c_void, sel: *const c_void) -> i32 {
     objc_call!(obj, sel, i32)
-}
-
-/// Check if two NSPoint values are equal with floating point tolerance.
-#[inline]
-fn ns_point_equals(p1: NSPoint, p2: NSPoint) -> bool {
-    let x_equal = (p1.x - p2.x).abs() < f64::EPSILON;
-    let y_equal = (p1.y - p2.y).abs() < f64::EPSILON;
-    x_equal && y_equal
 }
 
 /// Get UI element attribute value.
@@ -308,6 +287,53 @@ fn get_selected_text(element: &CFType) -> Option<String> {
     None
 }
 
+/// Find non-empty `AXSelectedText` in the accessibility subtree.
+///
+/// Some applications (notably Electron apps) expose selection on a descendant
+/// element rather than the focused element itself.
+fn find_selected_text_in_tree(root: &CFType) -> Option<String> {
+    const MAX_DEPTH: usize = 8;
+    const MAX_NODES: usize = 800;
+
+    let mut visited = 0usize;
+    let mut queue: VecDeque<(CFType, usize)> = VecDeque::new();
+    queue.push_back((root.clone(), 0));
+
+    while let Some((node, depth)) = queue.pop_front() {
+        visited += 1;
+        if visited > MAX_NODES {
+            break;
+        }
+
+        if let Some(text) = get_selected_text(&node) {
+            if !text.trim().is_empty() {
+                return Some(text);
+            }
+        }
+
+        if depth >= MAX_DEPTH {
+            continue;
+        }
+
+        if let Ok(ax_children) = get_element_attribute(&node, "AXChildren") {
+            if let Some(children) = ax_children.downcast::<CFArray>() {
+                for i in 0..children.len() {
+                    unsafe {
+                        if let Some(child_ptr) = children.get(i).map(|item| *item as CFTypeRef) {
+                            if !child_ptr.is_null() {
+                                let child = CFType::wrap_under_get_rule(child_ptr);
+                                queue.push_back((child, depth + 1));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Get selected text range from given element.
 fn get_selected_range(element: &CFType) -> Result<CFRange, AppError> {
     unsafe {
@@ -335,41 +361,25 @@ fn get_selected_range(element: &CFType) -> Result<CFRange, AppError> {
 /// Get selected text in currently focused element.
 pub fn get_selection() -> Result<String, AppError> {
     // get focused element, if failed, try to enable AXAPI for special apps and retry
-    let focused_element = match get_focused_element() {
+    let mut focused_element = match get_focused_element() {
         Ok(element) => element,
         Err(_) => {
-            // try to enable AXAPI for special applications
-            // inspired by https://github.com/0xfullex/selection-hook
             let _ = enable_axapi_for_special_apps();
-            // retry getting focused element
             get_focused_element()?
         }
     };
 
-    // 1. try to get selected text directly from focused element
-    if let Some(text) = get_selected_text(&focused_element) {
+    // try to find selection within the subtree
+    if let Some(text) = find_selected_text_in_tree(&focused_element) {
         return Ok(text);
     }
 
-    // 2. if focused element has no selected text, try traversing child elements
-    if let Ok(ax_children) = get_element_attribute(&focused_element, "AXChildren") {
-        if let Some(children) = ax_children.downcast::<CFArray>() {
-            // traverse child element array
-            for i in 0..children.len() {
-                unsafe {
-                    // get raw pointer from array directly
-                    if let Some(child_ptr) = children.get(i).map(|item| *item as CFTypeRef) {
-                        if !child_ptr.is_null() {
-                            // wrap pointer as CFType
-                            let child_element = CFType::wrap_under_get_rule(child_ptr);
-                            if let Some(text) = get_selected_text(&child_element) {
-                                return Ok(text);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    // if still not found, enable AXAPI for special applications (Electron/Chromium)
+    // and retry once even if we were able to obtain the focused element.
+    let _ = enable_axapi_for_special_apps();
+    focused_element = get_focused_element()?;
+    if let Some(text) = find_selected_text_in_tree(&focused_element) {
+        return Ok(text);
     }
 
     // if not found, return empty string
@@ -467,43 +477,6 @@ pub fn is_cursor_editable() -> Result<bool, AppError> {
             .iter()
             .any(|r| role.to_string().contains(r))
     }))
-}
-
-/// Check if current cursor is I-Beam (text cursor).
-pub fn is_ibeam_cursor() -> bool {
-    unsafe {
-        // get NSCursor class
-        let ns_cursor_class = objc_getClass(c"NSCursor".as_ptr());
-        if ns_cursor_class.is_null() {
-            return false;
-        }
-
-        // get currentSystemCursor selector
-        let current_cursor_sel = sel_registerName(c"currentSystemCursor".as_ptr());
-        if current_cursor_sel.is_null() {
-            return false;
-        }
-
-        // call [NSCursor currentSystemCursor]
-        let current_cursor = objc_call_ptr(ns_cursor_class, current_cursor_sel);
-        if current_cursor.is_null() {
-            return false;
-        }
-
-        // get hotSpot selector
-        let hot_spot_sel = sel_registerName(c"hotSpot".as_ptr());
-        if hot_spot_sel.is_null() {
-            return false;
-        }
-
-        // call [cursor hotSpot]
-        let hot_spot = objc_call_point(current_cursor, hot_spot_sel);
-
-        // check if hotSpot matches known I-Beam cursor hotSpots
-        ns_point_equals(hot_spot, NSPoint { x: 4.0, y: 9.0 })
-            || ns_point_equals(hot_spot, NSPoint { x: 16.0, y: 16.0 })
-            || ns_point_equals(hot_spot, NSPoint { x: 12.0, y: 11.0 })
-    }
 }
 
 /// Select specified number of characters from current cursor position backward.

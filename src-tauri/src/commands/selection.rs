@@ -16,6 +16,18 @@ static MAX_WAIT_TIME: AtomicU64 = AtomicU64::new(1000);
 /// Get selected text.
 #[tauri::command]
 pub async fn get_selection(app: AppHandle) -> Result<String, AppError> {
+    get_selection_with_fallback(app, true).await
+}
+
+/// Get selected text, optionally falling back to clipboard.
+///
+/// `allow_clipboard_fallback = false` is useful for mouse-driven selection hooks,
+/// where synthesizing `Cmd/Ctrl+C` can interfere with the user's selection
+/// (e.g. VSCode integrated terminal).
+pub async fn get_selection_with_fallback(
+    app: AppHandle,
+    allow_clipboard_fallback: bool,
+) -> Result<String, AppError> {
     // suspend shortcut handling to avoid interference
     let _guard = ShortcutHandlerGuard::suspend();
 
@@ -24,6 +36,10 @@ pub async fn get_selection(app: AppHandle) -> Result<String, AppError> {
         if !text.is_empty() {
             return Ok(text);
         }
+    }
+
+    if !allow_clipboard_fallback {
+        return Ok(String::new());
     }
 
     // if native API fails, fall back to clipboard method
