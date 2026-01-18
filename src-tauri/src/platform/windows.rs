@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use windows::core::Interface;
+use log::debug;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
 };
@@ -113,6 +114,51 @@ fn get_selected_range(element: &IUIAutomationElement) -> Result<IUIAutomationTex
         text_ranges
             .GetElement(0)
             .map_err(|_| "Failed to get first selection range".into())
+    }
+}
+
+/// Heuristic: whether the current focus is probably a terminal-like control.
+///
+/// Used to decide a safer "copy selection" shortcut (e.g. VSCode integrated terminal
+/// uses Ctrl+Shift+C; Ctrl+C sends SIGINT).
+pub fn is_probably_terminal_focused() -> Result<bool, AppError> {
+    unsafe {
+        let _com = ComGuard::new()?;
+        let focused_element = get_focused_element()?;
+
+        let name = focused_element.CurrentName().ok().map(|s| s.to_string());
+        let class = focused_element
+            .CurrentClassName()
+            .ok()
+            .map(|s| s.to_string());
+
+        let mut haystack = String::new();
+        if let Some(name) = name {
+            haystack.push_str(&name);
+            haystack.push(' ');
+        }
+        if let Some(class) = class {
+            haystack.push_str(&class);
+        }
+
+        let haystack = haystack.to_ascii_lowercase();
+        let keywords = [
+            "terminal",
+            "console",
+            "powershell",
+            "cmd",
+            "xterm",
+            "wsl",
+            "bash",
+            "zsh",
+            "conhost",
+            "windows terminal",
+            "cascadia",
+        ];
+
+        let is_terminal = keywords.iter().any(|k| haystack.contains(k));
+        debug!("focused element terminal heuristic: {is_terminal} (haystack: {haystack})");
+        Ok(is_terminal)
     }
 }
 

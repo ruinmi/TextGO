@@ -9,5 +9,6 @@ pub use macos::{
 };
 #[cfg(target_os = "windows")]
 pub use windows::{
-    get_cursor_location, get_selection, is_cursor_editable, select_backward_chars,
+    get_cursor_location, get_selection, is_cursor_editable, is_probably_terminal_focused,
+    select_backward_chars,
 };
