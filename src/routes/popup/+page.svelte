@@ -65,16 +65,19 @@
    *
    * @param message - optional user message
    */
-  async function chat(message?: string) {
+  async function chat(message?: string, options?: { bypassCache?: boolean }) {
     if (streaming || !entry?.model || !entry?.provider) {
       return;
     }
 
     // determine user message
-    const userMessage = message || entry?.result;
+    const userMessage = message ?? entry?.result;
     if (!userMessage) {
       return;
     }
+
+    const firstExchange = message === undefined && chatMessages.length === 0;
+    const shouldCheckCache = firstExchange && !options?.bypassCache && !!entry?.result;
 
     let aborted = false;
     try {
@@ -85,6 +88,23 @@
       streaming = true;
       // start auto scroll
       startAutoScroll();
+      // reset reply content early (avoid showing stale content while checking cache)
+      entry.response = '';
+
+      // use cached response if available (only for the first exchange of entry.result)
+      if (shouldCheckCache) {
+        try {
+          const cached = await invoke<string | null>('ai_cache_get', { prompt: entry.result });
+          if (cached) {
+            entry.response = cached;
+            chatMessages.push({ role: 'user', content: userMessage });
+            chatMessages.push({ role: 'assistant', content: entry.response });
+            return;
+          }
+        } catch {
+          // ignore cache errors and fall back to live request
+        }
+      }
 
       // build messages array
       const messages: ChatMessage[] = [];
@@ -112,7 +132,6 @@
       });
 
       // save reply content
-      entry.response = '';
       for await (const chunk of response) {
         if (!streaming) {
           // abort streaming
@@ -125,6 +144,15 @@
       if (entry.response) {
         chatMessages.push({ role: 'user', content: userMessage });
         chatMessages.push({ role: 'assistant', content: entry.response });
+      }
+
+      // cache response for entry.result exchange only
+      if (firstExchange && entry.result && entry.response) {
+        try {
+          await invoke('ai_cache_set', { prompt: entry.result, response: entry.response });
+        } catch {
+          // ignore cache errors
+        }
       }
     } catch (error) {
       if (error instanceof Error) {
@@ -142,6 +170,18 @@
         streaming = false;
       }
     }
+  }
+
+  function restartChat() {
+    if (!entry) {
+      return;
+    }
+    abort();
+    chatMessages = [];
+    replyBox = false;
+    userMessage = '';
+    entry.response = '';
+    chat(undefined, { bypassCache: true });
   }
 
   /**
@@ -316,7 +356,7 @@
               iconWeight="bold"
               iconClass="opacity-80"
               disabled={streaming || !entry?.response}
-              onclick={() => chat()}
+              onclick={restartChat}
             />
           {:else}
             <Button icon={ArrowCounterClockwise} onclick={() => codeMirror?.reset()} />
