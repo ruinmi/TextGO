@@ -2,7 +2,7 @@
   import { Icon } from '$lib/components';
   import { PROMPT_MARK, SCRIPT_MARK, SEARCHER_MARK } from '$lib/constants';
   import { CONVERT_ACTIONS, DEFAULT_ACTIONS, execute, GENERAL_ACTIONS, PROCESS_ACTIONS } from '$lib/executor';
-  import { prompts, scripts, searchers } from '$lib/stores.svelte';
+  import { prompts, scripts, searchers, popupPinned } from '$lib/stores.svelte';
   import type { Rule, WindowPlacement } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
@@ -338,6 +338,10 @@
           });
         }
       } else {
+        if (popupPinned.current) {
+          await execute(action.rule, selection);
+          return;
+        }
         // execute the action normally
         await execute(action.rule, selection, placement);
       }

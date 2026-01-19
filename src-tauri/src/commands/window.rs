@@ -71,10 +71,17 @@ pub fn mark_toolbar_initialized() {
 
 /// Show popup window and position it near the cursor.
 #[tauri::command]
-pub fn show_popup(app: AppHandle, payload: String, mouse: Option<bool>) -> Result<(), AppError> {
+pub fn show_popup(
+    app: AppHandle,
+    payload: String,
+    mouse: Option<bool>,
+    near_the_cursor: Option<bool>,
+) -> Result<(), AppError> {
     if let Some(window) = app.get_webview_window("popup") {
-        // position window near cursor
-        position_window_near_cursor(&window, mouse.unwrap_or(false))?;
+        if near_the_cursor.unwrap_or(true) {
+            // position window near cursor
+            position_window_near_cursor(&window, mouse.unwrap_or(false))?;
+        }
 
         // show and focus window
         if !POPUP_INITIALIZED.load(Ordering::Relaxed) {
