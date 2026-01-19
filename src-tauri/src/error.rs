@@ -1,5 +1,3 @@
-use log::error;
-
 #[derive(Debug, Clone)]
 pub struct AppError(String);
 
@@ -27,8 +25,11 @@ impl AppError {
     #[track_caller]
     fn new(msg: impl Into<String>) -> Self {
         let msg = msg.into();
-        let location = std::panic::Location::caller();
-        error!("[{}:{}] {}", location.file(), location.line(), msg);
+        #[cfg(debug_assertions)]
+        {
+            let location = std::panic::Location::caller();
+            log::debug!("[{}:{}] {}", location.file(), location.line(), msg);
+        }
         AppError(msg)
     }
 }

@@ -93,27 +93,34 @@ fn get_focused_element() -> Result<IUIAutomationElement, AppError> {
 }
 
 /// Get first selected text range from given element.
-fn get_selected_range(element: &IUIAutomationElement) -> Result<IUIAutomationTextRange, AppError> {
+fn get_selected_range(
+    element: &IUIAutomationElement,
+) -> Result<Option<IUIAutomationTextRange>, AppError> {
     unsafe {
         // get text pattern from element
-        let text_pattern: IUIAutomationTextPattern = element
+        let text_pattern: IUIAutomationTextPattern = match element
             .GetCurrentPattern(UIA_TextPatternId)
             .and_then(|p| p.cast())
-            .map_err(|_| "Failed to get text pattern")?;
+        {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
 
         // get currently selected text ranges
-        let text_ranges = text_pattern
-            .GetSelection()
-            .map_err(|_| "Failed to get text selection")?;
+        let text_ranges = match text_pattern.GetSelection() {
+            Ok(r) => r,
+            Err(_) => return Ok(None),
+        };
 
         if text_ranges.Length().unwrap_or(0) == 0 {
-            return Err("No text selection found".into());
+            return Ok(None);
         }
 
         // get first selection range
-        text_ranges
+        let range = text_ranges
             .GetElement(0)
-            .map_err(|_| "Failed to get first selection range".into())
+            .map_err(|_| AppError::from("Failed to get first selection range"))?;
+        Ok(Some(range))
     }
 }
 
@@ -172,7 +179,9 @@ pub fn get_selection() -> Result<String, AppError> {
         let focused_element = get_focused_element()?;
 
         // get first selected text range
-        let text_range = get_selected_range(&focused_element)?;
+        let Some(text_range) = get_selected_range(&focused_element)? else {
+            return Ok(String::new());
+        };
 
         // extract text from range
         let text = text_range
@@ -193,7 +202,8 @@ pub fn get_cursor_location() -> Result<(i32, i32), AppError> {
         let focused_element = get_focused_element()?;
 
         // get first selected text range
-        let text_range = get_selected_range(&focused_element)?;
+        let text_range = get_selected_range(&focused_element)?
+            .ok_or_else(|| AppError::from("No text selection found"))?;
 
         // get bounding rectangles for the text range
         let rect_array = text_range
@@ -314,7 +324,8 @@ pub fn select_backward_chars(chars: usize) -> Result<(), AppError> {
         let focused_element = get_focused_element()?;
 
         // get first selected text range
-        let text_range = get_selected_range(&focused_element)?;
+        let text_range = get_selected_range(&focused_element)?
+            .ok_or_else(|| AppError::from("No text selection found"))?;
 
         // move endpoint backward
         text_range
