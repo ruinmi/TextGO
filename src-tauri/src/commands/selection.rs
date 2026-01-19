@@ -4,7 +4,7 @@ use crate::error::AppError;
 use crate::platform;
 use crate::ENIGO;
 use enigo::{Direction, Key, Keyboard};
-use log::{debug, warn};
+use log::debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::AppHandle;
@@ -49,14 +49,15 @@ pub async fn get_selection_with_fallback(
     }
 
     // if native API fails, fall back to clipboard method
-    warn!("Failed to get selection natively, fallback to clipboard method");
-    get_selection_fallback_with_shortcut(app, CopyShortcut::Standard).await
+    debug!("selection: native empty, using clipboard fallback");
+    get_selection_fallback_with_shortcut(app, CopyShortcut::Standard, true).await
 }
 
 /// Get selected text through clipboard.
 async fn get_selection_fallback_with_shortcut(
     app: AppHandle,
     shortcut: CopyShortcut,
+    warn_on_timeout: bool,
 ) -> Result<String, AppError> {
     // use backup-operation-restore mode
     with_clipboard_backup(|| async move {
@@ -90,10 +91,15 @@ async fn get_selection_fallback_with_shortcut(
         }
 
         if selected_text.is_empty() {
-            warn!(
+            let message = format!(
                 "Clipboard did not change within {} ms, possibly no text selected",
                 max_wait_time.as_millis()
             );
+            if warn_on_timeout {
+                log::warn!("{message}");
+            } else {
+                debug!("{message}");
+            }
         } else {
             // adjust max wait time for next time
             MAX_WAIT_TIME
@@ -147,7 +153,7 @@ pub async fn get_selection_for_mouse(app: AppHandle) -> Result<String, AppError>
     #[cfg(not(target_os = "windows"))]
     let shortcut = CopyShortcut::Standard;
 
-    get_selection_fallback_with_shortcut(app, shortcut).await
+    get_selection_fallback_with_shortcut(app, shortcut, false).await
 }
 
 /// Send copy shortcut key.

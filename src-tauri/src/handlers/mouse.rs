@@ -1,11 +1,11 @@
 use crate::commands::get_selection_for_mouse;
 use crate::error::AppError;
-use crate::platform;
 use crate::{APP_HANDLE, ENIGO, SHORTCUT_PAUSED, SHORTCUT_SUSPEND};
 use enigo::Mouse;
 use log::debug;
 use rdev::{Button, Event, EventType};
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
+use std::sync::{LazyLock, Mutex};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
@@ -13,12 +13,13 @@ use tauri::{Emitter, Manager};
 /// Type alias for mouse click data (time, position, click_count).
 type Click = (Instant, (f64, f64), u8);
 
+static LAST_EMITTED_SELECTION: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+
 // mouse event tracking states
 thread_local! {
     static DRAG_START_POS: Cell<Option<(f64, f64)>> = const { Cell::new(None) };
     static LAST_CLICK: Cell<Option<Click>> = const { Cell::new(None) };
     static IS_DRAGGING: Cell<bool> = const { Cell::new(false) };
-    static PRESS_SELECTION: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 // thresholds for drag and double click detection
@@ -58,11 +59,6 @@ fn handle_mouse_press() -> Result<(), AppError> {
     DRAG_START_POS.set(Some(pos));
     IS_DRAGGING.set(false);
 
-    // snapshot current selection so we can detect if it changed due to this mouse action.
-    // (don't use clipboard fallback; it can interfere with the user's selection)
-    let selection_before = platform::get_selection().ok();
-    PRESS_SELECTION.with(|s| *s.borrow_mut() = selection_before);
-
     // hide toolbar on mouse press
     hide_toolbar(true)?;
 
@@ -86,12 +82,10 @@ fn handle_mouse_release() -> Result<(), AppError> {
     // reset drag start position
     DRAG_START_POS.set(None);
 
-    let selection_before = PRESS_SELECTION.with(|s| s.borrow_mut().take());
-
     // check for drag end
     if IS_DRAGGING.get() {
         debug!("checking for drag end");
-        emit_event("MouseClick+MouseMove", selection_before, false)?;
+        emit_event("MouseClick+MouseMove", false)?;
         IS_DRAGGING.set(false);
         return Ok(());
     }
@@ -112,7 +106,7 @@ fn handle_mouse_release() -> Result<(), AppError> {
             // emit event on 2nd and 3rd click; reuse the same shortcut string
             // so existing "double click" bindings also work for triple click.
             if count == 2 || count == 3 {
-                emit_event("MouseClick+MouseClick", selection_before, true)?;
+                emit_event("MouseClick+MouseClick", true)?;
             }
 
             // keep state so a third click can be recognized; reset after triple.
@@ -147,7 +141,7 @@ fn mouse_pos() -> Result<(f64, f64), AppError> {
 }
 
 /// Emit mouse event to frontend with current selection.
-fn emit_event(shortcut: &str, selection_before: Option<String>, force_show: bool) -> Result<(), AppError> {
+fn emit_event(shortcut: &str, force_show: bool) -> Result<(), AppError> {
     // get selection asynchronously and emit event
     if let Some(app) = APP_HANDLE.lock()?.as_ref() {
         let app_handle = app.clone();
@@ -155,9 +149,23 @@ fn emit_event(shortcut: &str, selection_before: Option<String>, force_show: bool
         tauri::async_runtime::spawn(async move {
             if let Ok(selection) = get_selection_for_mouse(app_handle.clone()).await {
                 let selection = selection.trim().to_string();
-                let selection_before = selection_before.unwrap_or_default().trim().to_string();
+                if selection.is_empty() {
+                    return;
+                }
 
-                if !selection.is_empty() && (force_show || selection != selection_before) {
+                let should_emit = if force_show {
+                    true
+                } else if let Ok(mut last) = LAST_EMITTED_SELECTION.lock() {
+                    let is_new = last.as_deref() != Some(selection.as_str());
+                    if is_new {
+                        *last = Some(selection.clone());
+                    }
+                    is_new
+                } else {
+                    true
+                };
+
+                if should_emit {
                     // emit event if selection is not empty
                     let event_data = serde_json::json!({
                         "shortcut": shortcut,
