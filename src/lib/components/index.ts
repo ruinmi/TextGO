@@ -8,6 +8,7 @@ export { default as Label } from './Label.svelte';
 export { default as List } from './List.svelte';
 export { default as Modal } from './Modal.svelte';
 export { default as Model } from './Model.svelte';
+export { default as PopupTemplate } from './PopupTemplate.svelte';
 export { default as Prompt } from './Prompt.svelte';
 export { default as Radio } from './Radio.svelte';
 export { default as Recorder } from './Recorder.svelte';

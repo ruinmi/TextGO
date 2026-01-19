@@ -1,5 +1,5 @@
 import { manager } from '$lib/shortcut';
-import type { Entry, Model, Prompt, Regexp, Script, Searcher, Shortcut } from '$lib/types';
+import type { Entry, Model, PopupTemplate, Prompt, Regexp, Script, Searcher, Shortcut } from '$lib/types';
 import { decrypt, encrypt } from '$lib/utils';
 import { getCurrentWindow, type Theme } from '@tauri-apps/api/window';
 import { LazyStore } from '@tauri-apps/plugin-store';
@@ -167,6 +167,9 @@ export const scripts = persisted<Script[]>('scripts', []);
 
 // prompt
 export const prompts = persisted<Prompt[]>('prompts', []);
+
+// popup templates
+export const popupTemplates = persisted<PopupTemplate[]>('popupTemplates', []);
 
 // searcher
 export const searchers = persisted<Searcher[]>('searchers', []);

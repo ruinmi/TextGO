@@ -1,8 +1,9 @@
 <script lang="ts">
   import { Button, CodeMirror, Icon } from '$lib/components';
   import { createLLMClient, type ChatMessage, type LLMClient } from '$lib/llm';
+  import { renderPopupTemplate } from '$lib/popup-template';
   import { m } from '$lib/paraglide/messages';
-  import { popupPinned, prompts } from '$lib/stores.svelte';
+  import { popupPinned, popupTemplates, prompts } from '$lib/stores.svelte';
   import type { Entry } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
@@ -60,6 +61,41 @@
   let userMessage = $state('');
   let userMessageInput: HTMLInputElement | null = $state(null);
 
+  function copyText(text: string | null | undefined) {
+    if (!text) {
+      return;
+    }
+    text && navigator.clipboard && navigator.clipboard.writeText(text);
+  }
+
+  function renderWithPopupTemplate(text: string): string | null {
+    const templateId = entry?.popupTemplateId?.trim();
+    if (!templateId) {
+      return null;
+    }
+    const template = popupTemplates.current.find((t) => t.id === templateId);
+    if (!template?.template) {
+      return null;
+    }
+    return renderPopupTemplate(template.template, text);
+  }
+
+  // Re-apply template after popupTemplates load/update (prompt mode only).
+  $effect(() => {
+    if (!promptMode || streaming) {
+      return;
+    }
+    const currentEntry = entry;
+    if (!currentEntry) {
+      return;
+    }
+    const response = currentEntry.response;
+    if (!response) {
+      return;
+    }
+    currentEntry.responseRendered = renderWithPopupTemplate(response) ?? undefined;
+  });
+
   /**
    * Start AI conversation.
    *
@@ -113,6 +149,7 @@
 
       // save reply content
       entry.response = '';
+      entry.responseRendered = undefined;
       for await (const chunk of response) {
         if (!streaming) {
           // abort streaming
@@ -122,9 +159,11 @@
       }
 
       // save to chat history
-      if (entry.response) {
+      const assistantMessage = entry.response;
+      if (assistantMessage) {
+        entry.responseRendered = renderWithPopupTemplate(assistantMessage) ?? undefined;
         chatMessages.push({ role: 'user', content: userMessage });
-        chatMessages.push({ role: 'assistant', content: entry.response });
+        chatMessages.push({ role: 'assistant', content: assistantMessage });
       }
     } catch (error) {
       if (error instanceof Error) {
@@ -268,7 +307,11 @@
       // copy to clipboard if needed
       tick().then(() => {
         if (!promptMode && entry?.copyOnPopup) {
-          codeMirror?.copy();
+          if (entry?.renderAsMarkdown) {
+            copyText(entry?.result);
+          } else {
+            codeMirror?.copy();
+          }
         }
       });
     });
@@ -319,9 +362,13 @@
               onclick={() => chat()}
             />
           {:else}
-            <Button icon={ArrowCounterClockwise} onclick={() => codeMirror?.reset()} />
-            <Button icon={TextIndent} onclick={() => codeMirror?.format()} />
-            <Button icon={CopySimple} onclick={() => codeMirror?.copy()} />
+            {#if entry?.renderAsMarkdown}
+              <Button icon={CopySimple} onclick={() => copyText(entry?.result)} />
+            {:else}
+              <Button icon={ArrowCounterClockwise} onclick={() => codeMirror?.reset()} />
+              <Button icon={TextIndent} onclick={() => codeMirror?.format()} />
+              <Button icon={CopySimple} onclick={() => codeMirror?.copy()} />
+            {/if}
           {/if}
           <div class="divider mx-0 my-auto divider-horizontal h-4 w-1 opacity-50"></div>
           <Button icon={X} onclick={() => currentWindow.hide()} />
@@ -338,7 +385,7 @@
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div class="prose prose-sm max-w-none text-base-content/90" onclick={handleLinkClick}>
                 <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-                {@html marked(entry.response + (streaming ? ' |' : ''))}
+                {@html marked((entry.responseRendered ?? entry.response) + (streaming ? ' |' : ''))}
               </div>
             {/if}
           </div>
@@ -382,15 +429,26 @@
             </div>
           {/if}
         {:else}
-          <!-- show result in CodeMirror in non-prompt mode -->
-          <CodeMirror
-            bind:this={codeMirror}
-            document={entry?.result}
-            minHeight={height}
-            maxHeight={height}
-            panelClass="hidden"
-            class="rounded-none border-none"
-          />
+          {#if entry?.renderAsMarkdown}
+            <div class="px-4 pt-2 pb-10">
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="prose prose-sm max-w-none text-base-content/90" onclick={handleLinkClick}>
+                <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                {@html marked(entry?.result || '')}
+              </div>
+            </div>
+          {:else}
+            <!-- show result in CodeMirror in non-prompt mode -->
+            <CodeMirror
+              bind:this={codeMirror}
+              document={entry?.result}
+              minHeight={height}
+              maxHeight={height}
+              panelClass="hidden"
+              class="rounded-none border-none"
+            />
+          {/if}
         {/if}
       </div>
     </div>

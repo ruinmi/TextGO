@@ -25,6 +25,7 @@
   import { check } from '@tauri-apps/plugin-updater';
   import {
     ArrowLeft,
+    AppWindow,
     CheckCircle,
     Code,
     Download,
@@ -202,6 +203,7 @@
       {@render menu(MagnifyingGlass, m.web_search(), resolve('/settings/searcher'))}
       <div class="divider my-0 opacity-50"></div>
       {@render menu(Gear, m.general_settings(), resolve('/settings/general'))}
+      {@render menu(AppWindow, m.popup_template(), resolve('/settings/popup-template'))}
     </ul>
     {#if version}
       <button

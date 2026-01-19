@@ -24,7 +24,7 @@
   import { m } from '$lib/paraglide/messages';
   import { manager } from '$lib/shortcut';
   import { Loading } from '$lib/states.svelte';
-  import { models, prompts, regexps, scripts, searchers, shortcuts } from '$lib/stores.svelte';
+  import { models, popupTemplates, prompts, regexps, scripts, searchers, shortcuts } from '$lib/stores.svelte';
   import {
     AppWindow,
     ArrowArcRight,
@@ -66,6 +66,7 @@
       displayMode = rule.displayMode || 'both';
       preview = rule.preview || false;
       outputMode = rule.outputMode;
+      popupTemplateId = rule.popupTemplateId || '';
       history = rule.history || false;
       clipboard = rule.clipboard || false;
     } else {
@@ -95,6 +96,7 @@
   let displayMode: DisplayMode = $state('both');
   let preview: boolean = $state(false);
   let outputMode: OutputMode | undefined = $state('replace');
+  let popupTemplateId: string = $state('');
   let history: boolean = $state(false);
   let clipboard: boolean = $state(false);
 
@@ -105,9 +107,29 @@
         displayMode = 'both';
         preview = false;
         outputMode = selectedAction.noResult ? undefined : selectedAction.promptMode ? 'popup' : 'replace';
+        popupTemplateId = '';
         history = !selectedAction.builtIn;
         clipboard = false;
       });
+    }
+  });
+
+  // available popup templates
+  const popupTemplateOptions: Option[] = $derived.by(() => {
+    const options: Option[] = [{ value: '', label: m.no_popup_template() }];
+    for (const template of popupTemplates.current) {
+      options.push({ value: template.id, label: template.id });
+    }
+    return options;
+  });
+
+  // reset invalid template selection
+  $effect(() => {
+    if (!popupTemplateId) {
+      return;
+    }
+    if (!popupTemplates.current.some((t) => t.id === popupTemplateId)) {
+      popupTemplateId = '';
     }
   });
 
@@ -272,6 +294,7 @@
           rule.displayMode = displayMode;
           rule.preview = preview;
           rule.outputMode = outputMode;
+          rule.popupTemplateId = popupTemplateId || undefined;
           rule.history = history;
           rule.clipboard = clipboard;
           break;
@@ -309,6 +332,7 @@
         displayMode: displayMode,
         preview: preview,
         outputMode: outputMode,
+        popupTemplateId: popupTemplateId || undefined,
         history: history,
         clipboard: clipboard
       });
@@ -491,6 +515,17 @@
             toggleClass="toggle-xs"
             disabled={selectedAction?.noResult || selectedAction?.promptMode}
           />
+          {#if outputMode === 'popup' && !selectedAction?.noResult}
+            <div class="mt-1">
+              <Label tip={m.popup_template_tip()}>{m.popup_template()}</Label>
+              <Select
+                bind:value={popupTemplateId}
+                options={popupTemplateOptions}
+                class="select-sm shadow-sm"
+                disabled={popupTemplates.current.length === 0}
+              />
+            </div>
+          {/if}
         </div>
       </div>
     </fieldset>

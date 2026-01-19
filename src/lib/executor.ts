@@ -1,8 +1,19 @@
 import { PROMPT_MARK, SCRIPT_MARK, SEARCHER_MARK } from '$lib/constants';
 import { evalAsync, evalSync } from '$lib/evaluator';
 import { isMouseShortcut } from '$lib/helpers';
+import { renderPopupTemplate } from '$lib/popup-template';
 import { m } from '$lib/paraglide/messages';
-import { denoPath, entries, historySize, nodePath, prompts, pythonPath, scripts, searchers } from '$lib/stores.svelte';
+import {
+  denoPath,
+  entries,
+  historySize,
+  nodePath,
+  popupTemplates,
+  prompts,
+  pythonPath,
+  scripts,
+  searchers
+} from '$lib/stores.svelte';
 import type { Entry, Processor, Prompt, Rule, Script, WindowPlacement } from '$lib/types';
 import { invoke } from '@tauri-apps/api/core';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
@@ -253,6 +264,8 @@ const scriptExecutor: Executor = async (rule, entry, placement) => {
       } else if (rule.outputMode === 'popup') {
         // show popup window
         entry.copyOnPopup = rule.clipboard;
+        entry.popupTemplateId = rule.popupTemplateId;
+        applyPopupTemplate(rule, entry);
         await showPopup(entry, placement);
       }
     }
@@ -278,6 +291,7 @@ const promptExecutor: Executor = async (rule, entry, placement) => {
     entry.actionType = 'prompt';
     entry.actionLabel = promptId;
     entry.result = result;
+    entry.popupTemplateId = rule.popupTemplateId;
     entry.systemPrompt = prompt.systemPrompt;
     entry.provider = prompt.provider;
     entry.model = prompt.model;
@@ -353,6 +367,8 @@ const builtinExecutor: Executor = async (rule, entry, placement) => {
   } else if (rule.outputMode === 'popup') {
     // show popup window
     entry.copyOnPopup = rule.clipboard;
+    entry.popupTemplateId = rule.popupTemplateId;
+    applyPopupTemplate(rule, entry);
     await showPopup(entry, placement);
   }
 
@@ -490,6 +506,37 @@ function saveHistory(entry: Entry): void {
   if (entries.current.length > historySize.current) {
     entries.current = entries.current.slice(0, historySize.current);
   }
+}
+
+/**
+ * Apply popup template to execution result.
+ *
+ * If no template is selected or the result is not valid JSON, this function does nothing.
+ */
+function applyPopupTemplate(rule: Rule, entry: Entry): void {
+  if (rule.outputMode !== 'popup') {
+    return;
+  }
+  const templateId = rule.popupTemplateId?.trim();
+  if (!templateId) {
+    return;
+  }
+  const template = popupTemplates.current.find((t) => t.id === templateId);
+  if (!template?.template) {
+    return;
+  }
+  const raw = entry.result?.trim();
+  if (!raw) {
+    return;
+  }
+  const rendered = renderPopupTemplate(template.template, raw);
+  if (rendered === null) {
+    // only apply template when input is valid JSON
+    return;
+  }
+
+  entry.result = rendered;
+  entry.renderAsMarkdown = true;
 }
 
 /**
