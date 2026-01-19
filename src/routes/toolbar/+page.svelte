@@ -389,13 +389,6 @@
   {#if initialized && actions.length > 0}
     <div class="w-fit overflow-hidden rounded-box border shadow-sm" in:fly={{ y: -10, duration: 100 }}>
       <div class="flex h-7.5 w-fit bg-base-200/95 backdrop-blur-sm" bind:this={container}>
-        <span
-          class="flex cursor-move items-center opacity-20 transition-opacity"
-          class:hover:opacity-90={mouseEntered}
-          data-tauri-drag-region
-        >
-          <LineVertical class="pointer-events-none size-4" />
-        </span>
         {#each visibleActions as action (action.id)}
           {@const showIcon = action.rule.displayMode !== 'label'}
           {@const showLabel = action.rule.displayMode !== 'icon'}
