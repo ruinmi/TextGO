@@ -508,7 +508,8 @@ async function showPopup(entry: Entry, placement?: WindowPlacement): Promise<voi
     } else {
       await invoke('show_popup', {
         payload: JSON.stringify(entry),
-        mouse: isMouseShortcut(entry.shortcut)
+        mouse: isMouseShortcut(entry.shortcut),
+        nearTheCursor: false
       });
     }
   } catch (error) {
