@@ -13,9 +13,10 @@ use rdev::listen;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{App, AppHandle, Emitter, Manager, RunEvent, WebviewWindow, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_log::{Target, TargetKind};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_store::StoreExt;
 
 // settings store filename
@@ -118,7 +119,23 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .clear_targets()
+                .rotation_strategy(RotationStrategy::KeepSome(10))
+                .timezone_strategy(TimezoneStrategy::UseLocal)
+                .max_file_size(1024 * 1024) // 1 MiB
                 .target(Target::new(TargetKind::Stdout))
+                .target(
+                    Target::new(TargetKind::LogDir {
+                        file_name: Some("textgo".into()),
+                    })
+                    .format(|out, message, record| {
+                        out.finish(format_args!(
+                            "[{}][{}] {}",
+                            record.level(),
+                            record.target(),
+                            message
+                        ))
+                    }),
+                )
                 .with_colors(ColoredLevelConfig::default())
                 .level(
                     // load log level from RUST_LOG env variable
@@ -185,11 +202,7 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     rdev::set_is_main_thread(false);
 
-    std::thread::spawn(|| {
-        if let Err(error) = listen(handle_mouse_event) {
-            log::error!("Error starting mouse event listener: {:?}", error);
-        }
-    });
+    start_mouse_event_listener();
 
     // setup system tray
     setup_tray(
@@ -312,6 +325,47 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     Ok(())
+}
+
+fn start_mouse_event_listener() {
+    let _ = std::thread::Builder::new()
+        .name("mouse-event-listener".to_string())
+        .spawn(|| {
+            let mut backoff = Duration::from_millis(200);
+            loop {
+                let started_at = Instant::now();
+                log::info!("Starting mouse event listener");
+                let result = std::panic::catch_unwind(|| listen(handle_mouse_event));
+
+                match result {
+                    Ok(Ok(())) => {
+                        log::warn!(
+                            "Mouse event listener exited; restarting after {:?}",
+                            backoff
+                        );
+                    }
+                    Ok(Err(error)) => {
+                        log::error!(
+                            "Mouse event listener error: {:?}; restarting after {:?}",
+                            error,
+                            backoff
+                        );
+                    }
+                    Err(_) => {
+                        log::error!("Mouse event listener panicked; restarting after {:?}", backoff);
+                    }
+                }
+
+                std::thread::sleep(backoff);
+
+                // If it ran for a while, reset backoff so later transient failures recover fast.
+                if started_at.elapsed() >= Duration::from_secs(30) {
+                    backoff = Duration::from_millis(200);
+                } else {
+                    backoff = (backoff * 2).min(Duration::from_secs(10));
+                }
+            }
+        });
 }
 
 /// Setup window to hide on close instead of quitting, with optional configuration.
