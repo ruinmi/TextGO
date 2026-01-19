@@ -48,6 +48,25 @@ export function updateActionId(prefix: string, actionId: string, newActionId: st
 }
 
 /**
+ * Update popup template ID in rules.
+ *
+ * @param templateId - current template ID
+ * @param newTemplateId - new template ID
+ */
+export function updatePopupTemplateId(templateId: string, newTemplateId: string) {
+  for (const shortcut in shortcuts.current) {
+    const s = shortcuts.current[shortcut];
+    if (s && s.rules) {
+      for (const rule of s.rules) {
+        if (rule.popupTemplateId === templateId) {
+          rule.popupTemplateId = newTemplateId;
+        }
+      }
+    }
+  }
+}
+
+/**
  * Shortcut manager class.
  */
 export class Manager {

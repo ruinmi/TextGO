@@ -130,6 +130,10 @@ export type Entry = {
   actionLabel?: string;
   /** Execution result (script return value / prompt content). */
   result?: string;
+  /** Selected popup template ID. */
+  popupTemplateId?: string;
+  /** Whether to render result as Markdown in popup. */
+  renderAsMarkdown?: boolean;
   /** Whether to copy result to clipboard on popup. */
   copyOnPopup?: boolean;
   /** Script language. */
@@ -140,6 +144,8 @@ export type Entry = {
   model?: string;
   /** Response content. */
   response?: string;
+  /** Rendered response content (e.g. template output). */
+  responseRendered?: string;
 } & ChatOptions;
 
 /**
@@ -162,6 +168,8 @@ export type Rule = {
   displayMode?: DisplayMode;
   /** How to output execution result. */
   outputMode?: OutputMode;
+  /** Popup template ID for popup output. */
+  popupTemplateId?: string;
   /** Whether to preview execution result in toolbar. */
   preview?: boolean;
   /** Whether to save execution result to history. */
@@ -243,6 +251,16 @@ export type Prompt = {
   /** Prompt content. */
   prompt: string;
 } & ChatOptions;
+
+/**
+ * Popup template type.
+ */
+export type PopupTemplate = {
+  /** Template ID. */
+  id: string;
+  /** Markdown template content. */
+  template: string;
+};
 
 /**
  * Web search action.
