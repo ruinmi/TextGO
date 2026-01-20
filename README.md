@@ -23,6 +23,29 @@ _TextGO is a cross-platform text processing tool that recognizes text types and 
 | <img align="center" src="screenshots/toolbar_mode.gif" /> | <img align="center" src="screenshots/quiet_mode.gif" /> |
 | --------------------------------------------------------- | ------------------------------------------------------- |
 
+## 📕Modifications
+- Customizable popup window templates
+- Implemented caching for AI model responses to improve performance and reduce API usage
+- Removed keyboard trigger to provide a better user experience
+- Ensured pinned popup windows remain in their original position
+- Kept the main window always on top
+
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+<br/>
+
 ## ✨ Core Features
 
 - **Multiple Triggers**: Hotkeys, double-click, or drag-select, each with independent rule configurations.
