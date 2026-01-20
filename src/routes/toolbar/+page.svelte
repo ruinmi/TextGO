@@ -9,6 +9,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { Image } from '@tauri-apps/api/image';
   import { IconMenuItem, Menu } from '@tauri-apps/api/menu';
+  import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window';
   import { type } from '@tauri-apps/plugin-os';
   import { memoize } from 'es-toolkit/function';
@@ -307,6 +308,18 @@
     };
   }
 
+  async function isPopupWindowVisible(): Promise<boolean> {
+    try {
+      const popupWindow = await WebviewWindow.getByLabel('popup');
+      if (!popupWindow) {
+        return false;
+      }
+      return await popupWindow.isVisible();
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Handle action click event.
    *
@@ -338,11 +351,11 @@
           });
         }
       } else {
-        if (popupPinned.current) {
+        // execute the action normally
+        if (action.rule.outputMode === 'popup' && popupPinned.current && (await isPopupWindowVisible())) {
           await execute(action.rule, selection);
           return;
         }
-        // execute the action normally
         await execute(action.rule, selection, placement);
       }
     } catch (error) {
